@@ -171,12 +171,8 @@ export function createWorker(): Worker {
 
 export const worker = createWorker();
 
-// Runnable entry: stdio / AF_UNIX transport. The C++ launcher appends
-// `--unix PATH` / `--idle-timeout SEC` when LOCATION uses the `launch:` scheme.
-const isMain =
-  import.meta.url === `file://${process.argv[1]}` ||
-  import.meta.main === true;
-
-if (isMain) {
-  worker.run(process.argv.slice(2));
-}
+// NOTE: This module is a library (imported by both the stdio entry,
+// `worker-stdio.ts`, and the HTTP entry, `serve.ts`) and intentionally does NOT
+// auto-run a transport on import. The runnable stdio / AF_UNIX entry is
+// `worker-stdio.ts` (built to `dist/worker.cjs`); see that file for why the
+// subprocess transport must run as a CommonJS bundle under Node.

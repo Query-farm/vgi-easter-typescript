@@ -5,5 +5,10 @@
 # extension spawns this as the worker LOCATION (optionally `launch:<path>`),
 # appending `--unix PATH` / `--idle-timeout SEC`. Execs the built worker so the
 # whole LOCATION is a single executable path.
+#
+# Runs the *CommonJS* bundle (dist/worker.cjs) under Node. The subprocess stdio
+# transport's IpcStreamWriter needs a synchronous node:fs.writeSync, which
+# @query-farm/vgi-rpc resolves via globalThis.require — available under Node CJS
+# but NOT under Node ESM (dist/worker.js). See src/worker-stdio.ts.
 HERE="$(cd "$(dirname "$0")" && pwd)"
-exec node "$HERE/../dist/worker.js" "$@"
+exec node "$HERE/../dist/worker.cjs" "$@"

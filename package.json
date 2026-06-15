@@ -11,7 +11,7 @@
   "main": "dist/worker.js",
   "types": "dist/worker.d.ts",
   "bin": {
-    "vgi-easter": "dist/worker.js"
+    "vgi-easter": "bin/vgi-easter"
   },
   "files": [
     "dist",
@@ -20,12 +20,13 @@
     "README.md"
   ],
   "scripts": {
-    "build": "bun run build:types && bun run build:js",
+    "build": "bun run build:types && bun run build:js && bun run build:worker-cjs",
     "build:types": "bunx tsc -p tsconfig.json",
     "build:js": "bun build ./src/worker.ts ./src/serve.ts --outdir dist --target node --format esm --sourcemap=external --external @query-farm/apache-arrow --external @query-farm/vgi-rpc --external @query-farm/vgi",
+    "build:worker-cjs": "esbuild ./src/worker-stdio.ts --bundle --platform=node --format=cjs --target=node22 --outfile=dist/worker.cjs --sourcemap=external --define:import.meta.url=__vgiImportMetaUrl --banner:js=\"const __vgiImportMetaUrl=require('node:url').pathToFileURL(__filename).href;\"",
     "test": "bun test",
     "start": "bun run src/serve.ts",
-    "worker": "node dist/worker.js"
+    "worker": "node dist/worker.cjs"
   },
   "dependencies": {
     "@query-farm/vgi": "file:./vendor-query-farm-vgi-0.1.0.tgz",
@@ -34,6 +35,7 @@
   },
   "devDependencies": {
     "@types/bun": "latest",
+    "esbuild": "^0.28.1",
     "typescript": "^6.0.3"
   }
 }
