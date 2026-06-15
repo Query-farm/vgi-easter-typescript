@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+# Copyright 2026 Query Farm LLC - https://query.farm
+#
+# stdio / AF_UNIX launcher entry for the easter VGI worker. The DuckDB vgi
+# extension spawns this as the worker LOCATION (optionally `launch:<path>`),
+# appending `--unix PATH` / `--idle-timeout SEC`. Execs the built worker so the
+# whole LOCATION is a single executable path.
+HERE="$(cd "$(dirname "$0")" && pwd)"
+exec node "$HERE/../dist/worker.js" "$@"
