@@ -19,7 +19,14 @@ import {
   type CatalogAttachResult,
   type VgiFunction,
 } from "@query-farm/vgi";
-import { DateDay } from "@query-farm/apache-arrow";
+import {
+  DateDay,
+  Field,
+  Schema,
+  Struct,
+  RecordBatch,
+  makeData,
+} from "@query-farm/apache-arrow";
 import { easterSunday, daysSinceEpoch } from "./easter.js";
 
 export const DATA_VERSION = "1.0.0";
@@ -71,6 +78,54 @@ export function computeEasterDays(
 }
 
 /**
+ * Build a one-column `date32` RecordBatch from day-numbers (days since the Unix
+ * epoch), propagating nulls via the validity bitmap.
+ *
+ * Why we build the batch by hand instead of returning a plain array: the SDK's
+ * array-to-column path (`batchFromColumns` → `buildColumnData`) routes a
+ * *non-null* Date32 column through arrow-js `vectorFromArray(numbers, DateDay)`,
+ * and on this apache-arrow fork that builder writes all zeros for raw
+ * day-number inputs (it only stores the right value when fed `Date` objects).
+ * The net effect was that any all-non-null result — e.g. the constant call
+ * `easter_date(2025)` — serialized as day 0 (1970-01-01). Returning an
+ * already-built `date32` batch (an `Int32Array` of day-numbers plus an explicit
+ * null bitmap) sidesteps that builder entirely and is correct for flat,
+ * constant, and dictionary-encoded inputs alike. See the integration test
+ * `test/sql/easter_function.test`.
+ */
+export function buildDate32Batch(days: Array<number | null>): RecordBatch {
+  const length = days.length;
+  const data = new Int32Array(length);
+  const nullBitmap = new Uint8Array(Math.ceil(length / 8) || 1);
+  let nullCount = 0;
+  for (let i = 0; i < length; i++) {
+    const d = days[i];
+    if (d === null || d === undefined) {
+      nullCount++;
+      continue;
+    }
+    nullBitmap[i >> 3] |= 1 << (i & 7);
+    data[i] = d;
+  }
+
+  const resultField = new Field("result", new DateDay(), true);
+  const child = makeData({
+    type: new DateDay(),
+    length,
+    data,
+    nullBitmap: nullCount > 0 ? nullBitmap : undefined,
+    nullCount,
+  } as any);
+  const struct = makeData({
+    type: new Struct([resultField]),
+    length,
+    children: [child],
+    nullCount: 0,
+  });
+  return new RecordBatch(new Schema([resultField]), struct);
+}
+
+/**
  * Scalar function: Date of Western (Gregorian) Easter Sunday for a given year.
  *
  * - single column input (`int64` year)
@@ -89,7 +144,7 @@ export const easterDateFunction: VgiFunction = defineScalarFunction({
     for (let i = 0; i < n; i++) {
       years.push(col ? (col.get(i) as number | bigint | null) : null);
     }
-    return computeEasterDays(years);
+    return buildDate32Batch(computeEasterDays(years));
   },
   examples: [
     {

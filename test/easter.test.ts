@@ -5,10 +5,17 @@ import { describe, test, expect, beforeEach, afterEach } from "bun:test";
 import { Schema, Field, DateDay, makeData, Struct, RecordBatch } from "@query-farm/apache-arrow";
 import { easterSunday, daysSinceEpoch, type EasterDate } from "../src/easter.js";
 import {
+  buildDate32Batch,
   computeEasterDays,
   easterDateFunction,
   implementationVersion,
 } from "../src/worker.js";
+
+/** Decode a date32 cell (arrow-js returns ms-since-epoch) to {year,month,day}. */
+function date32CellToDate(ms: number): EasterDate {
+  const d = new Date(ms);
+  return { year: d.getUTCFullYear(), month: d.getUTCMonth() + 1, day: d.getUTCDate() };
+}
 
 // Known Western (Gregorian) Easter Sunday dates.
 const KNOWN_EASTERS: Array<[number, EasterDate]> = [
@@ -93,6 +100,56 @@ describe("easter_date scalar function", () => {
   test("accepts bigint years (int64 wire form)", () => {
     const computed = computeEasterDays([2025n]);
     expect(dayNumberToDate(computed[0]!)).toEqual({ year: 2025, month: 4, day: 20 });
+  });
+});
+
+// Regression: the SDK's array→column path builds a non-null date32 column via
+// arrow-js vectorFromArray(numbers, DateDay), which writes all zeros on this
+// apache-arrow fork — so a *constant* call like `easter_date(2025)` came back as
+// 1970-01-01. compute now returns a hand-built date32 batch (buildDate32Batch);
+// these tests exercise that output path so the cells decode to real dates.
+describe("buildDate32Batch (date32 output path)", () => {
+  function decodeBatch(batch: ReturnType<typeof buildDate32Batch>) {
+    const col = batch.getChildAt(0)!;
+    const out: Array<EasterDate | null> = [];
+    for (let i = 0; i < col.length; i++) {
+      out.push(col.isValid(i) ? date32CellToDate(col.get(i) as number) : null);
+    }
+    return out;
+  }
+
+  test("single constant row decodes to the right date (not 1970-01-01)", () => {
+    const batch = buildDate32Batch(computeEasterDays([2025]));
+    expect(batch.numRows).toBe(1);
+    expect(decodeBatch(batch)).toEqual([{ year: 2025, month: 4, day: 20 }]);
+  });
+
+  test("multi-row column decodes to the right dates", () => {
+    const batch = buildDate32Batch(computeEasterDays([2023, 2024, 2025, 2026]));
+    expect(decodeBatch(batch)).toEqual([
+      { year: 2023, month: 4, day: 9 },
+      { year: 2024, month: 3, day: 31 },
+      { year: 2025, month: 4, day: 20 },
+      { year: 2026, month: 4, day: 5 },
+    ]);
+  });
+
+  test("propagates nulls through the validity bitmap", () => {
+    const batch = buildDate32Batch(computeEasterDays([2025, null, 2026]));
+    const col = batch.getChildAt(0)!;
+    expect(col.isValid(0)).toBe(true);
+    expect(col.isValid(1)).toBe(false);
+    expect(col.isValid(2)).toBe(true);
+    expect(decodeBatch(batch)).toEqual([
+      { year: 2025, month: 4, day: 20 },
+      null,
+      { year: 2026, month: 4, day: 5 },
+    ]);
+  });
+
+  test("day 0 (1970-01-01) round-trips so the constant bug can't masquerade as it", () => {
+    const batch = buildDate32Batch([0]);
+    expect(decodeBatch(batch)).toEqual([{ year: 1970, month: 1, day: 1 }]);
   });
 });
 
