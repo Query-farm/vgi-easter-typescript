@@ -1,6 +1,6 @@
 {
   "name": "@query-farm/vgi-easter",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "VGI worker that computes the date of Western (Gregorian) Easter Sunday for a given year.",
   "license": "MIT",
   "author": "Query Farm LLC (https://query.farm)",
@@ -29,7 +29,7 @@
     "worker": "node dist/worker.cjs"
   },
   "dependencies": {
-    "@query-farm/vgi": "file:./vendor-query-farm-vgi-0.2.0.tgz",
+    "@query-farm/vgi": "file:./vendor-query-farm-vgi-0.3.0.tgz",
     "@query-farm/apache-arrow": "^21.1.1",
     "@query-farm/vgi-rpc": "^0.7.5"
   },
