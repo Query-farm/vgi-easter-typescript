@@ -29,9 +29,9 @@
     "worker": "node dist/worker.cjs"
   },
   "dependencies": {
-    "@query-farm/vgi": "file:./vendor-query-farm-vgi-0.1.0.tgz",
+    "@query-farm/vgi": "file:./vendor-query-farm-vgi-0.2.0.tgz",
     "@query-farm/apache-arrow": "^21.1.1",
-    "@query-farm/vgi-rpc": "^0.7.3"
+    "@query-farm/vgi-rpc": "^0.7.5"
   },
   "devDependencies": {
     "@types/bun": "latest",

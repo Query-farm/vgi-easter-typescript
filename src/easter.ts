@@ -38,11 +38,10 @@ export function easterSunday(year: number): EasterDate {
 }
 
 /**
- * Number of whole days from the Unix epoch (1970-01-01) to the given
- * Gregorian calendar date, as required for an Arrow `date32` value. Uses
- * `Date.UTC` so the result is independent of the host timezone.
+ * Build the UTC-midnight JS `Date` for an `EasterDate`. This is the value the
+ * SDK's `rich` representation expects for a `date32`/`date64` column: a `Date`
+ * at UTC midnight, so the calendar date is independent of the host timezone.
  */
-export function daysSinceEpoch(d: EasterDate): number {
-  const ms = Date.UTC(d.year, d.month - 1, d.day);
-  return Math.round(ms / 86_400_000);
+export function easterDateUtc(d: EasterDate): Date {
+  return new Date(Date.UTC(d.year, d.month - 1, d.day));
 }

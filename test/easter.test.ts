@@ -2,20 +2,13 @@
 // Unit tests for the Easter date worker. Mirrors the Python tests/test_easter.py.
 
 import { describe, test, expect, beforeEach, afterEach } from "bun:test";
-import { Schema, Field, DateDay, makeData, Struct, RecordBatch } from "@query-farm/apache-arrow";
-import { easterSunday, daysSinceEpoch, type EasterDate } from "../src/easter.js";
+import { DateUnit, Type as ArrowType } from "@query-farm/apache-arrow";
+import { easterSunday, easterDateUtc, type EasterDate } from "../src/easter.js";
 import {
-  buildDate32Batch,
-  computeEasterDays,
+  computeEasterDates,
   easterDateFunction,
   implementationVersion,
 } from "../src/worker.js";
-
-/** Decode a date32 cell (arrow-js returns ms-since-epoch) to {year,month,day}. */
-function date32CellToDate(ms: number): EasterDate {
-  const d = new Date(ms);
-  return { year: d.getUTCFullYear(), month: d.getUTCMonth() + 1, day: d.getUTCDate() };
-}
 
 // Known Western (Gregorian) Easter Sunday dates.
 const KNOWN_EASTERS: Array<[number, EasterDate]> = [
@@ -32,9 +25,8 @@ const KNOWN_EASTERS: Array<[number, EasterDate]> = [
   [1943, { year: 1943, month: 4, day: 25 }], // latest possible Easter (April 25)
 ];
 
-/** day-number (days since epoch) -> {year, month, day} via UTC. */
-function dayNumberToDate(days: number): EasterDate {
-  const d = new Date(days * 86_400_000);
+/** Decompose a UTC `Date` to {year, month (1-based), day}. */
+function dateToParts(d: Date): EasterDate {
   return {
     year: d.getUTCFullYear(),
     month: d.getUTCMonth() + 1,
@@ -50,112 +42,57 @@ describe("easterSunday: known dates", () => {
   }
 });
 
+describe("easterDateUtc", () => {
+  test("builds a UTC-midnight Date for 2025-04-20", () => {
+    const d = easterDateUtc({ year: 2025, month: 4, day: 20 });
+    expect(d.getTime()).toBe(Date.UTC(2025, 3, 20));
+    expect(dateToParts(d)).toEqual({ year: 2025, month: 4, day: 20 });
+  });
+});
+
 describe("easter_date scalar function", () => {
-  test("declares a date32 output type", () => {
+  test("declares a date32 (Date/DAY) output type", () => {
     const outType = easterDateFunction.defaultOutputSchema!.fields[0].type as any;
-    expect(outType.constructor.name).toBe("DateDay");
+    // dateDay() builds an arrow-js Date_ with DateUnit.DAY (i.e. date32).
+    expect(outType.typeId).toBe(ArrowType.Date);
+    expect(outType.unit).toBe(DateUnit.DAY);
   });
 
-  test("compute returns date32 day-numbers for a batch", () => {
-    const computed = computeEasterDays([2024, 2025, 2026]);
-    expect(computed.map((d) => dayNumberToDate(d!))).toEqual([
+  // The rich contract: compute returns one `Date | null` per row. Known dates
+  // must come back as UTC-midnight Dates equal to the expected calendar date.
+  test("compute returns the correct Date per row (rich contract)", () => {
+    const dates = computeEasterDates([2024, 2025, 2026]);
+    expect(dates.map((d) => dateToParts(d!))).toEqual([
       { year: 2024, month: 3, day: 31 },
       { year: 2025, month: 4, day: 20 },
       { year: 2026, month: 4, day: 5 },
     ]);
   });
 
-  test("compute output builds a valid date32 column DuckDB renders as DATE", () => {
-    const days = computeEasterDays([2025]);
-    const field = new Field("result", new DateDay(), true);
-    const data = new Int32Array([days[0]!]);
-    const nullBitmap = new Uint8Array([0b1]);
-    const child = makeData({
-      type: new DateDay(),
-      length: 1,
-      data,
-      nullBitmap,
-      nullCount: 0,
-    } as any);
-    const struct = makeData({
-      type: new Struct([field]),
-      length: 1,
-      children: [child],
-      nullCount: 0,
-    });
-    const batch = new RecordBatch(new Schema([field]), struct);
-    // arrow-js decodes a Date32 cell to milliseconds-since-epoch (UTC midnight).
-    const ms = batch.getChildAt(0)!.get(0) as number;
-    const v = new Date(ms);
-    expect([v.getUTCFullYear(), v.getUTCMonth() + 1, v.getUTCDate()]).toEqual([2025, 4, 20]);
+  test("2025 maps to a Date equal to 2025-04-20 UTC", () => {
+    const dates = computeEasterDates([2025]);
+    expect(dates).toHaveLength(1);
+    expect(dates[0]).toBeInstanceOf(Date);
+    expect(dates[0]!.getTime()).toBe(Date.UTC(2025, 3, 20));
   });
 
-  test("null propagation", () => {
-    const computed = computeEasterDays([2025, null, 2026]);
-    expect(computed[1]).toBeNull();
-    expect(dayNumberToDate(computed[0]!)).toEqual({ year: 2025, month: 4, day: 20 });
-    expect(dayNumberToDate(computed[2]!)).toEqual({ year: 2026, month: 4, day: 5 });
+  test("all known dates round-trip through compute", () => {
+    for (const [year, expected] of KNOWN_EASTERS) {
+      const [d] = computeEasterDates([year]);
+      expect(dateToParts(d!)).toEqual(expected);
+    }
+  });
+
+  test("null propagation (null year -> null Date)", () => {
+    const dates = computeEasterDates([2025, null, 2026]);
+    expect(dates[1]).toBeNull();
+    expect(dateToParts(dates[0]!)).toEqual({ year: 2025, month: 4, day: 20 });
+    expect(dateToParts(dates[2]!)).toEqual({ year: 2026, month: 4, day: 5 });
   });
 
   test("accepts bigint years (int64 wire form)", () => {
-    const computed = computeEasterDays([2025n]);
-    expect(dayNumberToDate(computed[0]!)).toEqual({ year: 2025, month: 4, day: 20 });
-  });
-});
-
-// Regression: the SDK's array→column path builds a non-null date32 column via
-// arrow-js vectorFromArray(numbers, DateDay), which writes all zeros on this
-// apache-arrow fork — so a *constant* call like `easter_date(2025)` came back as
-// 1970-01-01. compute now returns a hand-built date32 batch (buildDate32Batch);
-// these tests exercise that output path so the cells decode to real dates.
-describe("buildDate32Batch (date32 output path)", () => {
-  function decodeBatch(batch: ReturnType<typeof buildDate32Batch>) {
-    const col = batch.getChildAt(0)!;
-    const out: Array<EasterDate | null> = [];
-    for (let i = 0; i < col.length; i++) {
-      out.push(col.isValid(i) ? date32CellToDate(col.get(i) as number) : null);
-    }
-    return out;
-  }
-
-  test("single constant row decodes to the right date (not 1970-01-01)", () => {
-    const batch = buildDate32Batch(computeEasterDays([2025]));
-    expect(batch.numRows).toBe(1);
-    expect(decodeBatch(batch)).toEqual([{ year: 2025, month: 4, day: 20 }]);
-  });
-
-  test("multi-row column decodes to the right dates", () => {
-    const batch = buildDate32Batch(computeEasterDays([2023, 2024, 2025, 2026]));
-    expect(decodeBatch(batch)).toEqual([
-      { year: 2023, month: 4, day: 9 },
-      { year: 2024, month: 3, day: 31 },
-      { year: 2025, month: 4, day: 20 },
-      { year: 2026, month: 4, day: 5 },
-    ]);
-  });
-
-  test("propagates nulls through the validity bitmap", () => {
-    const batch = buildDate32Batch(computeEasterDays([2025, null, 2026]));
-    const col = batch.getChildAt(0)!;
-    expect(col.isValid(0)).toBe(true);
-    expect(col.isValid(1)).toBe(false);
-    expect(col.isValid(2)).toBe(true);
-    expect(decodeBatch(batch)).toEqual([
-      { year: 2025, month: 4, day: 20 },
-      null,
-      { year: 2026, month: 4, day: 5 },
-    ]);
-  });
-
-  test("day 0 (1970-01-01) round-trips so the constant bug can't masquerade as it", () => {
-    const batch = buildDate32Batch([0]);
-    expect(decodeBatch(batch)).toEqual([{ year: 1970, month: 1, day: 1 }]);
-  });
-});
-
-describe("daysSinceEpoch", () => {
-  test("1970-01-01 is day 0", () => {
-    expect(daysSinceEpoch({ year: 1970, month: 1, day: 1 })).toBe(0);
+    const dates = computeEasterDates([2025n]);
+    expect(dateToParts(dates[0]!)).toEqual({ year: 2025, month: 4, day: 20 });
   });
 });
 
