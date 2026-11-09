@@ -94,14 +94,10 @@ ATTACH 'easter' (TYPE 'vgi', LOCATION 'http://localhost:8000/vgi');
 
 ## The SDK dependency
 
-`@query-farm/vgi` is not published to npm. This repo vendors it as a packed
-tarball (`vendor-query-farm-vgi-0.1.0.tgz`, produced by `npm pack` of the SDK
-checkout) and references it via `"@query-farm/vgi": "file:./vendor-...tgz"` in
-`package.json`. A `github:` git dependency was attempted first but the SDK repo
-is not publicly resolvable, and a `github:` install would not build `dist/`
-anyway (the SDK has no `prepare` script). The tarball ships both `src/` and
-`dist/`, so the import resolves under Bun (via the package's `bun` export → `src`)
-and under Node (via the `import` export → `dist`).
+The worker depends on [`@query-farm/vgi`](https://www.npmjs.com/package/@query-farm/vgi)
+from npm (0.49.x, which speaks VGI protocol 3.2 as required by the current
+`vgi` DuckDB extension), together with its peers `@query-farm/vgi-rpc` and
+`@query-farm/apache-arrow`.
 
 ## Development
 

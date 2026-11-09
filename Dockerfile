@@ -8,9 +8,8 @@ FROM oven/bun:1.3-slim
 
 WORKDIR /app
 
-# Install dependencies first (cached layer). The VGI SDK is vendored as a
-# packed tarball (not yet on npm), so it must be copied before `bun install`.
-COPY package.json bun.lock vendor-query-farm-vgi-0.1.0.tgz ./
+# Install dependencies first (cached layer).
+COPY package.json bun.lock ./
 RUN bun install --frozen-lockfile
 
 # Then the source.
